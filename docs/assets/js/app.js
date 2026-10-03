@@ -382,7 +382,8 @@
   });
 
   // ---------- current location ----------
-  function showMe(pos, { move }) {
+  // reset=true（ボタン操作）のときは選択状態を解除し、現在地を起点に地図と一覧を描き直す
+  function showMe(pos, { reset }) {
     me = [pos.coords.latitude, pos.coords.longitude];
     $("locate").classList.add("on");
     if (meMarker) meMarker.setLngLat(toLngLat(me));
@@ -391,23 +392,40 @@
       el.className = "me";
       meMarker = new maplibregl.Marker({ element: el }).setLngLat(toLngLat(me)).addTo(map);
     }
-    if (inBounds(me)) {
-      if (move) map.jumpTo({ center: toLngLat(me), zoom: Math.max(map.getZoom(), START_ZOOM) });
-    } else {
-      if (move) map.jumpTo({ center: toLngLat(HOME), zoom: START_ZOOM });
-      toast("現在地が新宿区外のため、牛込保健センター周辺を表示しています");
+    if (reset) {
+      popup.remove();
+      activeId = null;
+      mapReady.then(() => map.setFilter("pin-active", ["==", ["get", "id"], -1]));
+      if (!isDesktop()) setSheet("peek");
     }
+    const inside = inBounds(me);
+    const zoom = reset ? START_ZOOM : Math.max(map.getZoom(), START_ZOOM);
+    map.jumpTo({ center: toLngLat(inside ? me : HOME), zoom });
     refresh();
     $("list").scrollTop = 0;
+    if (!inside) toast("現在地が新宿区外のため、牛込保健センター周辺を表示しています");
+    else if (reset) toast("現在地から近い順に表示しています");
+  }
+
+  function setLocating(busy) {
+    $("locate").setAttribute("aria-busy", busy);
+    $("locate-label").textContent = busy ? "現在地を取得中…" : "現在地から探す";
   }
 
   function locate({ silent = false } = {}) {
     if (!navigator.geolocation) return silent || toast("この端末では現在地を取得できません");
+    setLocating(true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => showMe(pos, { move: true }),
-      () => silent || toast("現在地を取得できませんでした"),
-      // 速さ優先：高精度測位は使わず、5分以内の位置なら再利用する
-      { enableHighAccuracy: false, maximumAge: 300000, timeout: 8000 }
+      (pos) => {
+        setLocating(false);
+        showMe(pos, { reset: !silent });
+      },
+      (err) => {
+        setLocating(false);
+        if (!silent) toast(err.code === 1 ? "位置情報の利用が許可されていません。ブラウザの設定をご確認ください" : "現在地を取得できませんでした");
+      },
+      // 起動時は速さ優先で5分以内の位置を再利用。ボタン操作時は30秒以内の位置まで
+      { enableHighAccuracy: false, maximumAge: silent ? 300000 : 30000, timeout: 10000 }
     );
   }
   $("locate").addEventListener("click", () => locate());

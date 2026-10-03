@@ -53,10 +53,16 @@ button { cursor: pointer; }
 
 .locate-btn {
   position: fixed; z-index: 450; right: 16px; bottom: calc(var(--sheet-peek) + 36px);
-  width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--bg); color: var(--ink);
-  display: grid; place-items: center; box-shadow: var(--shadow); transition: bottom .3s ease;
+  display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 16px 0 12px; border: 0; border-radius: 22px;
+  background: var(--bg); color: var(--ink); font-size: 14px; font-weight: 700;
+  box-shadow: var(--shadow); transition: bottom .3s ease;
 }
-.locate-btn.on { color: var(--accent); }
+.locate-btn .icon { color: var(--accent); }
+.locate-btn.on { background: var(--accent); color: #fff; }
+.locate-btn.on .icon { color: #fff; }
+.locate-btn[aria-busy="true"] { pointer-events: none; opacity: .85; }
+.locate-btn[aria-busy="true"] .icon { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- bottom sheet ---------- */
 .sheet {
