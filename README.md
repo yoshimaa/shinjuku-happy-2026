@@ -29,6 +29,58 @@
 
 取扱店舗は、ミニフラッグまたはステッカーが目印です。
 
+## アプリの機能
+
+- 地図（OpenFreeMap Liberty＋MapLibre GL JS、新宿区のみ）と一覧で取扱店を表示
+- 起動時に現在地を取得して近い順に表示（取得までは牛込保健センター周辺）
+- 店名・業種・住所でのキーワード検索
+- 券種・ジャンル・エリア・商店会での絞り込み（初期状態は「応援券が使える店舗」のみ）
+- 複数の商店会に重複掲載されている店舗（削除フラグ=1）は初期状態で非表示
+
+## 開発
+
+ビルド不要の静的サイトで、`docs/` をそのまま GitHub Pages で公開します。
+
+```
+docs/                 GitHub Pages の公開ディレクトリ
+  index.html
+  assets/css/style.css
+  assets/js/app.js
+  assets/map/liberty-ja.json  地図スタイル（生成物）
+  data/shops.json     アプリが読み込む店舗データ（生成物）
+  .nojekyll
+data/                 元データ（公開サイトには含めない）
+  shinjuku_happy_shops.csv
+  geocache.json       住所→緯度経度のキャッシュ
+scripts/
+  scrape.py           公式サイト → data/shinjuku_happy_shops.csv
+  build_data.py       CSV + 緯度経度 → docs/data/shops.json
+  build_style.py      OpenFreeMap Liberty → 日本語化・軽量化 → docs/assets/map/liberty-ja.json
+```
+
+ローカルで確認する：
+
+```bash
+python3 -m http.server 8000 -d docs
+```
+
+ブラウザで http://localhost:8000 を開きます。
+
+店舗データの更新手順：
+
+```bash
+python3 scripts/scrape.py
+```
+```bash
+python3 scripts/build_data.py
+```
+
+緯度経度は国土地理院の住所検索APIで取得し、`data/geocache.json` にキャッシュします（新しい住所だけ問い合わせます）。
+
+### GitHub Pages の設定
+
+リポジトリの Settings → Pages で、Source を「Deploy from a branch」、Branch を `main` / `/docs` にします。
+
 ## データの出典
 
 取扱店舗の情報は、公式サイトの「商品券取扱店検索」から取得しています。
