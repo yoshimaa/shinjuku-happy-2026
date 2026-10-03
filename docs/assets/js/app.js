@@ -3,28 +3,31 @@
 
   // ---------- master data ----------
   const ICONS = {
+    daily: '<path d="M3 4h2l2.4 11h11L21 7H6.2"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/>',
     food: '<path d="M7 3v8a2 2 0 0 0 4 0V3M9 3v18M17 3c-2 2-2 6 0 8v10"/>',
-    grocery: '<path d="M3 4h2l2.4 11h11L21 7H6.2"/><circle cx="9" cy="19.5" r="1.5"/><circle cx="17" cy="19.5" r="1.5"/>',
     fashion: '<path d="M8 3 4 6l2 4 2-1v12h8V9l2 1 2-4-4-3c-.5 1.5-2 2.5-4 2.5S8.5 4.5 8 3Z"/>',
     beauty: '<path d="M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11Z"/>',
     shop: '<path d="M5 8h14l-1 13H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
-    service: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>',
+    service: '<path d="M4 11 12 4l8 7"/><path d="M6 10v10h12V10"/><path d="M10 20v-5h4v5"/>',
+    other: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   };
-  const GENRES = [
-    { key: "food", label: "飲食", color: "#ec6a3c", industries: ["居酒屋・ダイニングバー", "和食・大衆食堂", "喫茶店・カフェ", "中華料理・韓国料理", "洋食・レストラン", "フレンチ・イタリアン", "その他飲食店", "寿司", "焼肉・鉄板焼", "そば・うどん", "バー・スナック・パブ", "カレー・エスニック料理", "ラーメン"] },
-    { key: "grocery", label: "食品・スーパー", color: "#3a9d5d", industries: ["食料品販売", "スーパーマーケット", "コンビニエンスストア", "酒店", "パン・サンドイッチ販売", "米穀店"] },
-    { key: "fashion", label: "ファッション", color: "#8a5cd0", industries: ["婦人服販売", "衣料品・寝具販売", "靴・バッグ販売", "紳士服販売", "時計販売", "眼鏡・コンタクトレンズ販売"] },
-    { key: "beauty", label: "美容・健康", color: "#d6487e", industries: ["ドラッグストア", "理容業・美容業", "エステ・リラクゼーション", "鍼灸・あん摩マッサージ", "整体・ボディケア", "化粧品販売", "銭湯・サウナ"] },
-    { key: "shop", label: "ショッピング", color: "#2f7fd6", industries: ["その他小売店", "百貨店・商業施設", "生花・植木販売", "家電販売", "日用雑貨販売", "文具店", "スポーツ用品店", "書店", "ゲーム・おもちゃ・娯楽用品", "カメラ・写真用品販売"] },
-    { key: "service", label: "暮らし・サービス", color: "#6b7280", industries: ["その他サービス業", "クリーニング店", "ホテル・旅館", "カルチャー教室", "その他の業種"] },
+  // 大分類（表示順）→ 中分類。店舗データの big / mid（scripts/categories.py で付与）と対応
+  const CATEGORIES = [
+    { key: "日常のお買い物", icon: "daily", color: "#3a9d5d", mids: ["コンビニ", "スーパー", "ドラッグストア", "食料品・酒店"] },
+    { key: "飲食", icon: "food", color: "#ec6a3c", mids: ["飲食店", "居酒屋・バー", "カフェ・パン"] },
+    { key: "ファッション", icon: "fashion", color: "#8a5cd0", mids: ["洋服・ファッション", "メガネ・コンタクト"] },
+    { key: "美容・リラクゼーション", icon: "beauty", color: "#d6487e", mids: ["美容院・理容室", "エステ・マッサージ", "銭湯・サウナ"] },
+    { key: "ショッピング", icon: "shop", color: "#2f7fd6", mids: ["百貨店・商業施設", "家電・日用品", "本・文具・趣味", "花・植木"] },
+    { key: "暮らし・サービス", icon: "service", color: "#b7791f", mids: ["クリーニング", "暮らしのサービス"] },
+    { key: "その他", icon: "other", color: "#6b7280", mids: ["その他"] },
   ];
-  const genreOf = (industry) => GENRES.find((g) => g.industries.includes(industry)) || GENRES[GENRES.length - 1];
+  const categoryOf = (big) => CATEGORIES.find((c) => c.key === big) || CATEGORIES[CATEGORIES.length - 1];
   const TICKETS = [
     { key: "support", label: "応援券" },
     { key: "common", label: "共通券" },
   ];
   const AREAS = ["四谷", "新宿", "淀橋A", "淀橋B", "戸塚", "早稲田", "神楽坂"];
-  const DEFAULT = () => ({ tickets: ["support"], genres: [], areas: [], assoc: "", deleted: false });
+  const DEFAULT = () => ({ tickets: ["support"], bigs: [], mids: [], areas: [], assoc: "", deleted: false });
   const PAGE = 60;
 
   // ---------- state ----------
@@ -54,7 +57,13 @@
   const DETAIL_ZOOM = 15.5;
   const toLngLat = ([lat, lng]) => [lng, lat];
 
-  const mapPadding = () => (isDesktop() ? { top: 20, bottom: 20, left: 20, right: 20 } : { top: 70, bottom: Math.round(innerHeight * 0.42), left: 0, right: 0 });
+  // 検索バー・分類バー・一覧シートに隠れない範囲を地図の表示領域にする
+  const mapPadding = () => {
+    const bars = document.body.classList.contains("has-mid") ? 40 : 0;
+    return isDesktop()
+      ? { top: 64 + bars, bottom: 20, left: 20, right: 20 }
+      : { top: 116 + bars, bottom: Math.round(innerHeight * 0.42), left: 0, right: 0 };
+  };
   const map = new maplibregl.Map({
     container: "map",
     style: "assets/map/liberty-ja.json",
@@ -151,7 +160,8 @@
   const matches = (s, f) =>
     (f.deleted || !s.deleted) &&
     f.tickets.every((t) => s[t]) &&
-    (!f.genres.length || f.genres.includes(s.genre.key)) &&
+    (!f.bigs.length || f.bigs.includes(s.big)) &&
+    (!f.mids.length || f.mids.includes(s.mid)) &&
     (!f.areas.length || f.areas.includes(s.area)) &&
     (!f.assoc || s.assoc === f.assoc) &&
     (!query || s.text.includes(query));
@@ -174,6 +184,7 @@
     renderList();
     renderMarkers(fit);
     renderSummary();
+    renderCategoryBar();
   }
 
   function renderSummary() {
@@ -181,23 +192,23 @@
     const d = DEFAULT();
     const tags = [
       ...applied.tickets.map((t) => TICKETS.find((x) => x.key === t).label + "が使える"),
-      ...applied.genres.map((g) => GENRES.find((x) => x.key === g).label),
+      ...(applied.mids.length ? applied.mids : applied.bigs),
       ...applied.areas,
       applied.assoc,
       applied.deleted ? "重複掲載を含む" : "",
     ].filter(Boolean);
     $("active-filters").innerHTML = tags.map((t) => `<span>${esc(t)}</span>`).join("");
     const changed =
-      applied.genres.length + applied.areas.length + (applied.assoc ? 1 : 0) + (applied.deleted ? 1 : 0) +
+      applied.bigs.length + applied.mids.length + applied.areas.length + (applied.assoc ? 1 : 0) + (applied.deleted ? 1 : 0) +
       (applied.tickets.join() !== d.tickets.join() ? 1 : 0);
     $("filter-count").hidden = !changed;
     $("filter-count").textContent = changed;
   }
 
   function cardHtml(s) {
-    const g = s.genre;
+    const c = s.category;
     return `<li class="card${s.id === activeId ? " active" : ""}" data-id="${s.id}" tabindex="0">
-      <div class="thumb" style="--c:${g.color}">${icon(g.key)}</div>
+      <div class="thumb" style="--c:${c.color}">${icon(c.icon)}</div>
       <div class="card-body">
         <div class="card-top">
           <h3 class="card-name">${esc(s.name)}</h3>
@@ -277,7 +288,7 @@
       if (!isDesktop()) setSheet("peek");
       // 途中のズームのタイルを読まないよう、アニメーションなしで移動する
       // ポップアップが検索バーに隠れないよう、ピンを表示領域の少し下に置く
-      map.easeTo({ center: toLngLat(s.latlng), zoom: Math.max(map.getZoom(), DETAIL_ZOOM), offset: [0, 90], duration: 0 });
+      map.easeTo({ center: toLngLat(s.latlng), zoom: Math.max(map.getZoom(), DETAIL_ZOOM), offset: [0, 70], duration: 0 });
     }
     if (s.latlng) popup.setLngLat(toLngLat(s.latlng)).setHTML(popupHtml(s)).addTo(map);
   }
@@ -319,12 +330,79 @@
   });
   $("q").addEventListener("focus", () => !isDesktop() && setSheet("full"));
 
+  // ---------- floating category bar ----------
+  // 地図上で1タップで分類を切り替える（単一選択。もう一度押すと解除）。詳細な複数選択は絞り込み画面で行う
+  const without = (f, ...keys) => ({ ...f, ...Object.fromEntries(keys.map((k) => [k, []])) });
+  function countBy(field, filter) {
+    const n = {};
+    for (const s of shops) if (matches(s, filter)) n[s[field]] = (n[s[field]] || 0) + 1;
+    return n;
+  }
+  const pill = (attrs, label, on, count, iconKey) =>
+    `<button type="button" class="pill${on ? " on" : ""}" ${attrs} aria-pressed="${on}"${count ? "" : " data-empty"}>` +
+    (iconKey ? icon(iconKey) : "") + `<span>${esc(label)}</span><small>${count.toLocaleString()}</small></button>`;
+
+  function renderCategoryBar() {
+    const bigCounts = countBy("big", without(applied, "bigs", "mids"));
+    $("cat-big").innerHTML = CATEGORIES.map((c) =>
+      pill(`data-big="${esc(c.key)}" style="--c:${c.color}"`, c.key, applied.bigs.includes(c.key), bigCounts[c.key] || 0, c.icon)
+    ).join("");
+    const only = applied.bigs.length === 1 ? categoryOf(applied.bigs[0]) : null;
+    const showMid = !!only && only.mids.length > 1;
+    $("cat-mid").hidden = !showMid;
+    if (document.body.classList.contains("has-mid") !== showMid) {
+      document.body.classList.toggle("has-mid", showMid);
+      map.setPadding(mapPadding());
+    }
+    if (showMid) {
+      const midCounts = countBy("mid", without(applied, "mids"));
+      const total = only.mids.reduce((n, m) => n + (midCounts[m] || 0), 0);
+      $("cat-mid").innerHTML =
+        pill('data-mid=""', "すべて", !applied.mids.length, total) +
+        only.mids.map((m) => pill(`data-mid="${esc(m)}"`, m, applied.mids.includes(m), midCounts[m] || 0)).join("");
+    }
+  }
+
+  // 表示中の範囲に該当店舗がなければ、該当店舗が収まるように地図を動かす
+  function refreshKeepingView() {
+    refresh();
+    mapReady.then(() => {
+      const b = map.getBounds();
+      const inView = visible.some((s) => s.latlng && b.contains(toLngLat(s.latlng)));
+      if (!inView) renderMarkers(true);
+    });
+  }
+
+  $("cat-big").addEventListener("click", (e) => {
+    const b = e.target.closest(".pill");
+    if (!b) return;
+    const key = b.dataset.big;
+    const same = applied.bigs.length === 1 && applied.bigs[0] === key;
+    applied = { ...applied, bigs: same ? [] : [key], mids: [] };
+    popup.remove();
+    refreshKeepingView();
+    if (!same) b.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+  });
+  $("cat-mid").addEventListener("click", (e) => {
+    const b = e.target.closest(".pill");
+    if (!b) return;
+    const m = b.dataset.mid;
+    const same = applied.mids.length === 1 && applied.mids[0] === m;
+    applied = { ...applied, mids: !m || same ? [] : [m] };
+    popup.remove();
+    refreshKeepingView();
+  });
+
   // ---------- filter sheet ----------
   const chip = (value, label, on) => `<button type="button" class="chip" data-value="${esc(value)}" aria-pressed="${on}">${esc(label)}</button>`;
 
   function renderFilter() {
     $("f-ticket").innerHTML = TICKETS.map((t) => chip(t.key, t.label, draft.tickets.includes(t.key))).join("");
-    $("f-genre").innerHTML = GENRES.map((g) => chip(g.key, g.label, draft.genres.includes(g.key))).join("");
+    $("f-big").innerHTML = CATEGORIES.map((c) => chip(c.key, c.key, draft.bigs.includes(c.key))).join("");
+    const mids = CATEGORIES.filter((c) => draft.bigs.includes(c.key) && c.mids.length > 1).flatMap((c) => c.mids);
+    draft.mids = draft.mids.filter((m) => mids.includes(m));
+    $("f-mid-wrap").hidden = !mids.length;
+    $("f-mid").innerHTML = mids.map((m) => chip(m, m, draft.mids.includes(m))).join("");
     $("f-area").innerHTML = AREAS.map((a) => chip(a, a, draft.areas.includes(a))).join("");
     const assocs = [...new Set(shops.filter((s) => !draft.areas.length || draft.areas.includes(s.area)).map((s) => s.assoc))];
     if (draft.assoc && !assocs.includes(draft.assoc)) draft.assoc = "";
@@ -347,7 +425,8 @@
     });
   }
   bindChips("f-ticket", "tickets");
-  bindChips("f-genre", "genres");
+  bindChips("f-big", "bigs");
+  bindChips("f-mid", "mids");
   bindChips("f-area", "areas");
   $("f-assoc").addEventListener("change", (e) => {
     draft.assoc = e.target.value;
@@ -445,7 +524,7 @@
   fetch("data/shops.json")
     .then((r) => r.json())
     .then((data) => {
-      shops = data.map((s) => ({ ...s, genre: genreOf(s.industry), text: norm([s.name, s.industry, s.address, s.assoc, s.area].join(" ")) }));
+      shops = data.map((s) => ({ ...s, category: categoryOf(s.big), text: norm([s.name, s.industry, s.big, s.mid, s.address, s.assoc, s.area].join(" ")) }));
       refresh();
     })
     .catch(() => {

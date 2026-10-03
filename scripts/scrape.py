@@ -9,11 +9,13 @@ import time
 import urllib.request
 from pathlib import Path
 
+from categories import classify, is_known
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "shinjuku_happy_shops.csv"
 FIRST = "https://shinjuku-happy.jp/shop/?listall"
 PAGE = "https://shinjuku-happy.jp/shop/page/{}/?listall"
-COLUMNS = ["項番", "エリア", "商店会", "共通券", "応援券", "店舗名", "業種", "電話番号", "住所", "URL", "削除フラグ"]
+COLUMNS = ["項番", "エリア", "商店会", "共通券", "応援券", "店舗名", "業種", "大分類", "中分類", "電話番号", "住所", "URL", "削除フラグ"]
 
 
 def fetch(url):
@@ -63,7 +65,12 @@ def main():
         key = (row["店舗名"], row["住所"])
         row["項番"] = str(i)
         row["削除フラグ"] = "1" if key in seen else "0"
+        row["大分類"], row["中分類"] = classify(row["業種"])
         seen.add(key)
+
+    unknown = sorted({r["業種"] for r in rows if not is_known(r["業種"])})
+    if unknown:
+        print(f"警告: 未分類の業種を「その他」に入れました: {unknown}（scripts/categories.py に追加してください）")
 
     with open(OUT, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=COLUMNS)

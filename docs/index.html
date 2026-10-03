@@ -35,6 +35,11 @@
     </button>
   </header>
 
+  <nav class="catbar" aria-label="分類">
+    <div id="cat-big" class="pills"></div>
+    <div id="cat-mid" class="pills sub-pills" hidden></div>
+  </nav>
+
   <button id="locate" class="locate-btn" type="button">
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
     <span id="locate-label">現在地から探す</span>
@@ -70,8 +75,12 @@
         <p class="hint">選んだ券種がすべて使える店舗を表示します。応援券は中小企業・個人店、共通券はすべての取扱店で使えます。</p>
       </fieldset>
       <fieldset>
-        <legend>ジャンル</legend>
-        <div id="f-genre" class="chips"></div>
+        <legend>分類</legend>
+        <div id="f-big" class="chips"></div>
+        <div id="f-mid-wrap" class="sub" hidden>
+          <p class="sub-label">詳しい分類</p>
+          <div id="f-mid" class="chips"></div>
+        </div>
       </fieldset>
       <fieldset>
         <legend>エリア</legend>

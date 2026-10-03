@@ -52,6 +52,8 @@ def main():
             "support": r["応援券"] == "1",
             "name": r["店舗名"],
             "industry": r["業種"],
+            "big": r["大分類"],
+            "mid": r["中分類"],
             "tel": r["電話番号"],
             "address": r["住所"],
             "url": r["URL"],

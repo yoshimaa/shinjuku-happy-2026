@@ -34,7 +34,8 @@
 - 地図（OpenFreeMap Liberty＋MapLibre GL JS、新宿区のみ）と一覧で取扱店を表示
 - 起動時に現在地を取得して近い順に表示（取得までは牛込保健センター周辺）
 - 店名・業種・住所でのキーワード検索
-- 券種・ジャンル・エリア・商店会での絞り込み（初期状態は「応援券が使える店舗」のみ）
+- 地図上の分類バーで大分類（7種）→中分類をワンタップで切り替え
+- 券種・分類・エリア・商店会での絞り込み（初期状態は「応援券が使える店舗」のみ）
 - 複数の商店会に重複掲載されている店舗（削除フラグ=1）は初期状態で非表示
 
 ## 開発
@@ -53,7 +54,8 @@ data/                 元データ（公開サイトには含めない）
   shinjuku_happy_shops.csv
   geocache.json       住所→緯度経度のキャッシュ
 scripts/
-  scrape.py           公式サイト → data/shinjuku_happy_shops.csv
+  scrape.py           公式サイト → data/shinjuku_happy_shops.csv（大分類・中分類も付与）
+  categories.py       業種 → 大分類・中分類の対応表
   build_data.py       CSV + 緯度経度 → docs/data/shops.json
   build_style.py      OpenFreeMap Liberty → 日本語化・軽量化 → docs/assets/map/liberty-ja.json
 ```
