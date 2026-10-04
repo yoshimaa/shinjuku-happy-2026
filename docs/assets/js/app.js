@@ -9,6 +9,7 @@
     beauty: '<path d="M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11Z"/>',
     shop: '<path d="M5 8h14l-1 13H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
     service: '<path d="M4 11 12 4l8 7"/><path d="M6 10v10h12V10"/><path d="M10 20v-5h4v5"/>',
+    filter: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
     other: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   };
   // 大分類（表示順）→ 中分類。店舗データの big / mid（scripts/categories.py で付与）と対応
@@ -34,7 +35,7 @@
   let shops = [];
   let applied = DEFAULT();
   let draft = DEFAULT();
-  let query = "";
+  let search = null; // 検索中は { raw, tokens, fuzzy }。検索は絞り込みを無視して全店舗が対象
   let me = null; // [lat, lng]
   let visible = [];
   let shown = PAGE;
@@ -43,7 +44,6 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const isDesktop = () => matchMedia("(min-width: 900px)").matches;
-  const norm = (s) => s.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
   // 全角の英数字・記号を半角にして、店名が間延びして何行にも折り返されないようにする（括弧は全角のまま）
   const tidy = (s) =>
     String(s)
@@ -176,8 +176,91 @@
     (!f.bigs.length || f.bigs.includes(s.big)) &&
     (!f.mids.length || f.mids.includes(s.mid)) &&
     (!f.areas.length || f.areas.includes(s.area)) &&
-    (!f.assoc || s.assoc === f.assoc) &&
-    (!query || s.text.includes(query));
+    (!f.assoc || s.assoc === f.assoc);
+
+  // ---------- fuzzy search ----------
+  // 表記ゆれを吸収するため、店舗データと検索語の両方を同じ規則で揃えてから比べる
+  const SMALL_KANA = { ぁ: "あ", ぃ: "い", ぅ: "う", ぇ: "え", ぉ: "お", っ: "つ", ゃ: "や", ゅ: "ゆ", ょ: "よ", ゎ: "わ", ゕ: "か", ゖ: "け" };
+  const KANJI_NUM = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  const fold = (str) =>
+    String(str)
+      .normalize("NFKC") // 全角英数→半角、半角カナ→全角
+      .toLowerCase()
+      .replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60)) // カタカナ→ひらがな
+      .replace(/[ぁぃぅぇぉっゃゅょゎゕゖ]/g, (c) => SMALL_KANA[c]) // 小さい文字→大きい文字
+      .replace(/([一-龠])[けが]([一-龠])/g, "$1$2") // 市ヶ谷・市が谷→市谷
+      .replace(/([一二三四五六七八九])丁目/g, (_, k) => KANJI_NUM[k] + "丁目") // 三丁目→3丁目
+      .replace(/(\d+)(丁目|番地|番|号)/g, "$1") // 3丁目5番→35（住所のハイフンも下で消す）
+      .replace(/[\s・･\-‐‑–—―−~〜'’"“”.,、。()（）\[\]［］「」&/!?:]/g, ""); // 空白・記号は無視
+
+  // 言い換え：検索語がどれかに一致したら、同じグループの語でもヒットさせる
+  const SYNONYMS = [
+    ["カフェ", "喫茶", "喫茶店", "コーヒー", "珈琲", "cafe", "coffee"],
+    ["床屋", "散髪", "理髪", "理容", "ヘアカット", "barber"],
+    ["美容院", "美容室", "ヘアサロン", "美容"],
+    ["マッサージ", "整体", "あんま", "鍼灸", "はり", "リラクゼーション", "エステ"],
+    ["薬局", "薬屋", "ドラッグ", "ドラッグストア"],
+    ["本屋", "書店"],
+    ["文房具", "文具"],
+    ["居酒屋", "飲み屋", "酒場", "バー", "bar", "スナック", "パブ"],
+    ["パン屋", "パン", "ベーカリー", "bakery", "サンドイッチ"],
+    ["ラーメン", "拉麺"],
+    ["中華", "中国料理", "餃子"],
+    ["焼肉", "焼き肉"],
+    ["そば", "蕎麦"],
+    ["寿司", "すし", "鮨"],
+    ["イタリアン", "イタリア料理", "パスタ", "ピザ"],
+    ["フレンチ", "フランス料理"],
+    ["カレー", "インド料理", "エスニック"],
+    ["和食", "日本料理", "定食", "食堂"],
+    ["ランチ", "ご飯", "ごはん", "食事", "飲食"],
+    ["ファミマ", "ファミリーマート"],
+    ["スタバ", "スターバックス"],
+    ["セブイレ", "セブンイレブン"],
+    ["服", "洋服", "衣料", "婦人服", "紳士服", "ファッション"],
+    ["メガネ", "眼鏡", "コンタクト"],
+    ["靴", "シューズ", "バッグ", "鞄"],
+    ["花屋", "生花", "フラワー", "植木"],
+    ["酒屋", "酒店", "リカー"],
+    ["お米", "米屋", "米穀"],
+    ["クリーニング", "洗濯"],
+    ["銭湯", "風呂", "サウナ"],
+    ["電気屋", "家電"],
+    ["雑貨", "日用品", "日用雑貨"],
+    ["百貨店", "デパート", "商業施設"],
+    ["おもちゃ", "玩具", "ゲーム"],
+    ["ホテル", "旅館", "宿"],
+  ].map((g) => g.map(fold));
+  const expand = (token) => [token, ...SYNONYMS.filter((g) => g.includes(token)).flat()];
+
+  function parseQuery(raw) {
+    const tokens = raw.split(/\s+/).map(fold).filter(Boolean).map(expand);
+    return tokens.length ? { raw: raw.trim(), tokens, fuzzy: false } : null;
+  }
+
+  // 一致度：語ごとに、店名で一致=3、業種・分類=2、住所・商店会・エリア=1 を足す。1語でも一致しなければ0
+  function score(s, tokens) {
+    let total = 0;
+    for (const alts of tokens) {
+      const hit = (field) => alts.some((t) => s.f[field].includes(t));
+      const pt = hit("name") ? 3 : hit("cat") ? 2 : hit("place") ? 1 : 0;
+      if (!pt) return 0;
+      total += pt;
+    }
+    if (s.f.name.startsWith(tokens[0][0])) total += 1; // 店名の先頭から一致するものを上に
+    return total;
+  }
+
+  // 一致する店舗がないとき（打ち間違い・うろ覚え）用：検索語の2文字ずつの組が店名・業種にどれだけ含まれるか
+  const bigrams = (str) => {
+    const t = str.replace(/ー/g, "");
+    return t.length < 2 ? [t] : [...Array(t.length - 1)].map((_, i) => t.slice(i, i + 2));
+  };
+  function similarity(s, q) {
+    const grams = bigrams(q);
+    const target = (s.f.name + s.f.cat).replace(/ー/g, "");
+    return grams.filter((g) => target.includes(g)).length / grams.length;
+  }
 
   const distance = (a, b) => {
     const R = 6371e3, rad = Math.PI / 180;
@@ -188,36 +271,57 @@
   const fmtDist = (m) => (m < 1000 ? `${Math.round(m / 10) * 10}m` : `${(m / 1000).toFixed(1)}km`);
 
   function refresh({ fit = false } = {}) {
-    visible = shops.filter((s) => matches(s, applied));
     const o = origin();
-    if (o) {
-      visible.forEach((s) => (s.dist = s.latlng ? distance(o, s.latlng) : Infinity));
-      visible.sort((a, b) => a.dist - b.dist);
+    shops.forEach((s) => (s.dist = o && s.latlng ? distance(o, s.latlng) : Infinity));
+    if (search) {
+      // 検索中は絞り込みをすべて無視し、全店舗（重複掲載の2件目以降は除く）から一致度の高い順に並べる
+      const all = shops.filter((s) => !s.deleted);
+      all.forEach((s) => (s.score = score(s, search.tokens)));
+      visible = all.filter((s) => s.score > 0);
+      search.fuzzy = !visible.length;
+      if (search.fuzzy) {
+        // 2文字の組の6割以上が含まれる店舗だけを候補にする（短い検索語ほど厳しくなる）
+        const q = fold(search.raw);
+        all.forEach((s) => (s.score = q.length >= 2 ? similarity(s, q) : 0));
+        visible = all.filter((s) => s.score >= 0.6);
+      }
+      visible.sort((a, b) => b.score - a.score || a.dist - b.dist);
+    } else {
+      visible = shops.filter((s) => matches(s, applied));
+      if (o) visible.sort((a, b) => a.dist - b.dist);
     }
     shown = PAGE;
     renderList();
     renderMarkers(fit);
+    renderCategoryBar(); // 先に描く（詳細設定ボタンの件数バッジは renderSummary で付ける）
     renderSummary();
-    renderCategoryBar();
   }
 
   function renderSummary() {
-    const order = !me ? "" : meInside() ? "・近い順" : "・牛込保健センターに近い順";
+    const order = search ? "・一致度順" : !me ? "" : meInside() ? "・近い順" : "・牛込保健センターに近い順";
     $("result-count").textContent = `${visible.length.toLocaleString()}件${order}`;
     const d = DEFAULT();
-    const tags = [
+    const tags = search ? [] : [
       ...applied.tickets.map((t) => TICKETS.find((x) => x.key === t).label + "が使える"),
       ...(applied.mids.length ? applied.mids : applied.bigs),
       ...applied.areas,
       applied.assoc,
       applied.deleted ? "重複掲載を含む" : "",
     ].filter(Boolean);
-    $("active-filters").innerHTML = tags.map((t) => `<span>${esc(t)}</span>`).join("");
+    $("active-filters").innerHTML = search
+      ? `<span class="note">${
+          !visible.length ? `「${esc(search.raw)}」に一致する店舗はありません`
+          : search.fuzzy ? "完全に一致する店舗がないため、似た店舗を表示しています"
+          : "全店舗から検索中（絞り込みは一時的にオフ）"}</span>`
+      : tags.map((t) => `<span>${esc(t)}</span>`).join("");
     const changed =
       applied.bigs.length + applied.mids.length + applied.areas.length + (applied.assoc ? 1 : 0) + (applied.deleted ? 1 : 0) +
       (applied.tickets.join() !== d.tickets.join() ? 1 : 0);
-    $("filter-count").hidden = !changed;
-    $("filter-count").textContent = changed;
+    for (const id of ["filter-count", "more-count"]) {
+      if (!$(id)) continue;
+      $(id).hidden = !changed;
+      $(id).textContent = changed;
+    }
   }
 
   function cardHtml(s) {
@@ -401,11 +505,25 @@
   // ---------- search ----------
   let timer;
   $("q").addEventListener("input", (e) => {
+    $("clear-q").hidden = !e.target.value;
     clearTimeout(timer);
     timer = setTimeout(() => {
-      query = norm(e.target.value);
-      refresh();
+      search = parseQuery(e.target.value);
+      $("list").scrollTop = 0;
+      refreshKeepingView();
     }, 200);
+  });
+  // 検索をやめると、検索前の絞り込みに戻る
+  function clearSearch() {
+    clearTimeout(timer);
+    $("q").value = "";
+    $("clear-q").hidden = true;
+    search = null;
+  }
+  $("clear-q").addEventListener("click", () => {
+    clearSearch();
+    refreshKeepingView();
+    $("q").focus();
   });
   $("q").addEventListener("focus", () => !isDesktop() && setSheet("full"));
 
@@ -422,11 +540,13 @@
     (iconKey ? icon(iconKey) : "") + `<span>${esc(label)}</span><small>${count.toLocaleString()}</small></button>`;
 
   function renderCategoryBar() {
-    const bigCounts = countBy("big", without(applied, "bigs", "mids"));
-    $("cat-big").innerHTML = CATEGORIES.map((c) =>
-      pill(`data-big="${esc(c.key)}" style="--c:${c.color}"`, c.key, applied.bigs.includes(c.key), bigCounts[c.key] || 0, c.icon)
-    ).join("");
-    const only = applied.bigs.length === 1 ? categoryOf(applied.bigs[0]) : null;
+    // 検索中は検索結果の分類別件数を出し、どれも選択していない状態で表示する
+    const bigCounts = search ? visible.reduce((n, s) => ((n[s.big] = (n[s.big] || 0) + 1), n), {}) : countBy("big", without(applied, "bigs", "mids"));
+    const bigs = search ? [] : applied.bigs;
+    $("cat-big").innerHTML =
+      CATEGORIES.map((c) => pill(`data-big="${esc(c.key)}" style="--c:${c.color}"`, c.key, bigs.includes(c.key), bigCounts[c.key] || 0, c.icon)).join("") +
+      `<button type="button" class="pill pill-more" data-more>${icon("filter")}<span>詳細設定</span><span id="more-count" class="pill-badge" hidden></span></button>`;
+    const only = bigs.length === 1 ? categoryOf(bigs[0]) : null;
     const showMid = !!only && only.mids.length > 1;
     $("cat-mid").hidden = !showMid;
     if (document.body.classList.contains("has-mid") !== showMid) {
@@ -455,8 +575,12 @@
   $("cat-big").addEventListener("click", (e) => {
     const b = e.target.closest(".pill");
     if (!b) return;
+    if ("more" in b.dataset) return openFilter();
+    // 検索中に分類を押したら、検索をやめてその分類で絞り込む
+    const searching = !!search;
+    if (searching) clearSearch();
     const key = b.dataset.big;
-    const same = applied.bigs.length === 1 && applied.bigs[0] === key;
+    const same = !searching && applied.bigs.length === 1 && applied.bigs[0] === key;
     applied = { ...applied, bigs: same ? [] : [key], mids: [] };
     popup.remove();
     refreshKeepingView();
@@ -535,6 +659,7 @@
   });
   $("apply").addEventListener("click", () => {
     applied = structuredClone(draft);
+    clearSearch(); // 絞り込みを適用したら検索はやめる（検索中は絞り込みが効かないため）
     closeFilter();
     refresh({ fit: true });
   });
@@ -613,7 +738,11 @@
   fetch("data/shops.json")
     .then((r) => r.json())
     .then((data) => {
-      shops = data.map((s) => ({ ...s, name: tidy(s.name), industry: tidy(s.industry), address: tidy(s.address), category: categoryOf(s.big), text:norm([s.name, s.industry, s.big, s.mid, s.address, s.assoc, s.area].join(" ")) }));
+      shops = data.map((s) => ({ ...s, name: tidy(s.name), industry: tidy(s.industry), address: tidy(s.address), category: categoryOf(s.big), f: {
+        name: fold(s.name),
+        cat: fold([s.industry, s.big, s.mid].join(" ")),
+        place: fold([s.address.replace(/^東京都新宿区/, ""), s.assoc, s.area].join(" ")),
+      } }));
       refresh();
     })
     .catch(() => {
