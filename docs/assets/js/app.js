@@ -27,10 +27,9 @@
     { key: "support", label: "応援券" },
     { key: "common", label: "共通券" },
   ];
-  const AREAS = ["四谷", "新宿", "淀橋A", "淀橋B", "戸塚", "早稲田", "神楽坂"];
-  // 絞り込みの初期状態（起動時・リセット時・検索をやめたとき）
-  const DEFAULT = () => ({ tickets: ["support"], bigs: [], mids: [], areas: [], assoc: "", deleted: false });
-  // 絞り込みなし（検索を始めたとき。重複掲載の2件目以降だけは除く）
+  // 絞り込みの初期状態（起動時・検索をやめたとき・通常時のリセット）
+  const DEFAULT = () => ({ tickets: ["support"], bigs: [], mids: [] });
+  // 絞り込みなし（検索を始めたとき・検索中のリセット）
   const NONE = () => ({ ...DEFAULT(), tickets: [] });
   const PAGE = 60;
 
@@ -175,13 +174,13 @@
   }
 
   // ---------- filtering ----------
+  // 重複掲載（複数の商店会に載っている店舗の2件目以降）は常に表示しない。エリア・商店会はデータとして持つが
+  // 絞り込みには使わない（検索の対象には含む）
   const matches = (s, f) =>
-    (f.deleted || !s.deleted) &&
+    !s.deleted &&
     f.tickets.every((t) => s[t]) &&
     (!f.bigs.length || f.bigs.includes(s.big)) &&
-    (!f.mids.length || f.mids.includes(s.mid)) &&
-    (!f.areas.length || f.areas.includes(s.area)) &&
-    (!f.assoc || s.assoc === f.assoc);
+    (!f.mids.length || f.mids.includes(s.mid));
   // 検索語に一致するか（検索していなければ常に true。一致度は scoreShops で付ける）
   const hit = (s) => !search || s.score > 0;
 
@@ -313,10 +312,7 @@
     const tags = [
       ...applied.tickets.map((t) => TICKETS.find((x) => x.key === t).label + "が使える"),
       ...(applied.mids.length ? applied.mids : applied.bigs),
-      ...applied.areas,
-      applied.assoc,
-      applied.deleted ? "重複掲載を含む" : "",
-    ].filter(Boolean);
+    ];
     const note = !search ? ""
       : !visible.length ? (tags.length ? "検索語と条件に一致する店舗はありません" : `「${search.raw}」に一致する店舗はありません`)
       : search.fuzzy ? "完全に一致する店舗がないため、似た店舗を表示しています"
@@ -325,8 +321,7 @@
       (note ? `<span class="note">${esc(note)}</span>` : "") + tags.map((t) => `<span>${esc(t)}</span>`).join("");
     // 詳細設定のバッジ：初期状態（検索中は絞り込みなし）から変えた条件の数
     const changed =
-      applied.bigs.length + applied.mids.length + applied.areas.length + (applied.assoc ? 1 : 0) + (applied.deleted ? 1 : 0) +
-      (applied.tickets.join() !== base.tickets.join() ? 1 : 0);
+      applied.bigs.length + applied.mids.length + (applied.tickets.join() !== base.tickets.join() ? 1 : 0);
     for (const id of ["filter-count", "more-count"]) {
       if (!$(id)) continue;
       $(id).hidden = !changed;
@@ -348,7 +343,6 @@
         <div class="tickets">
           ${s.support ? '<span class="tag support">応援券</span>' : ""}
           ${s.common ? '<span class="tag common">共通券</span>' : ""}
-          ${s.deleted ? '<span class="tag dup">重複掲載</span>' : ""}
         </div>
       </div>
     </li>`;
@@ -617,15 +611,8 @@
     draft.mids = draft.mids.filter((m) => mids.includes(m));
     $("f-mid-wrap").hidden = !mids.length;
     $("f-mid").innerHTML = mids.map((m) => chip(m, m, draft.mids.includes(m))).join("");
-    $("f-area").innerHTML = AREAS.map((a) => chip(a, a, draft.areas.includes(a))).join("");
-    const assocs = [...new Set(shops.filter((s) => !draft.areas.length || draft.areas.includes(s.area)).map((s) => s.assoc))];
-    if (draft.assoc && !assocs.includes(draft.assoc)) draft.assoc = "";
-    $("f-assoc").innerHTML =
-      '<option value="">すべての商店会</option>' +
-      assocs.map((a) => `<option value="${esc(a)}"${a === draft.assoc ? " selected" : ""}>${esc(a)}</option>`).join("");
-    $("f-deleted").checked = draft.deleted;
-    // 検索中は検索結果の中での件数。リセットを押した後は検索をやめるので、検索なしの件数
-    const n = shops.filter((s) => matches(s, draft) && (resetPending || hit(s))).length;
+    // 検索中は検索結果の中での件数
+    const n = shops.filter((s) => matches(s, draft) && hit(s)).length;
     $("apply").textContent = `結果を表示（${n.toLocaleString()}件）`;
     $("apply").disabled = n === 0;
   }
@@ -642,20 +629,9 @@
   bindChips("f-ticket", "tickets");
   bindChips("f-big", "bigs");
   bindChips("f-mid", "mids");
-  bindChips("f-area", "areas");
-  $("f-assoc").addEventListener("change", (e) => {
-    draft.assoc = e.target.value;
-    renderFilter();
-  });
-  $("f-deleted").addEventListener("change", (e) => {
-    draft.deleted = e.target.checked;
-    renderFilter();
-  });
 
-  let resetPending = false; // 絞り込み画面でリセットを押した（適用すると検索もやめる）
   function openFilter() {
     draft = structuredClone(applied);
-    resetPending = false;
     renderFilter();
     $("filter").hidden = $("filter-backdrop").hidden = false;
     $("apply").focus();
@@ -667,13 +643,12 @@
   $("open-filter").addEventListener("click", openFilter);
   $("filter-backdrop").addEventListener("click", closeFilter);
   document.addEventListener("keydown", (e) => e.key === "Escape" && !$("filter").hidden && closeFilter());
+  // リセットは画面上の選択だけを戻す（「結果を表示」で反映）。検索語は残し、検索中なら絞り込みなしに戻す
   $("reset").addEventListener("click", () => {
-    draft = DEFAULT();
-    resetPending = !!search;
+    draft = search ? NONE() : DEFAULT();
     renderFilter();
   });
   $("apply").addEventListener("click", () => {
-    if (resetPending) resetSearch();
     applied = structuredClone(draft); // 検索中なら検索結果にかけ合わせる
     closeFilter();
     refresh({ fit: true });
