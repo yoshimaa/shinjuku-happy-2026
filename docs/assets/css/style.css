@@ -11,6 +11,8 @@
   --radius: 14px;
   --shadow: 0 6px 24px rgba(20, 20, 30, .12);
   --sheet-peek: 42vh;
+  --sheet-half: 60vh;
+  --sheet-h: var(--sheet-peek); /* 一覧シートが地図に重なっている高さ */
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
 
@@ -23,8 +25,11 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
+body[data-sheet="half"] { --sheet-h: var(--sheet-half); }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
+/* ダブルタップでページが拡大されないようにする（地図は MapLibre が独自に処理） */
+.searchbar, .catbar, .locate-btn, .sheet, .map-btn, .toast, .filter { touch-action: manipulation; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
@@ -55,6 +60,7 @@ button { cursor: pointer; }
 .catbar {
   position: fixed; z-index: 480; left: 0; right: 0; top: calc(68px + env(safe-area-inset-top, 0px));
   pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease, visibility 0s;
 }
 .pills {
   display: flex; gap: 8px; padding: 2px 16px 6px; overflow-x: auto; scrollbar-width: none;
@@ -76,10 +82,10 @@ button { cursor: pointer; }
 .sub-pills .pill.on { background: var(--ink); }
 
 .locate-btn {
-  position: fixed; z-index: 450; right: 16px; bottom: calc(var(--sheet-peek) + 36px);
+  position: fixed; z-index: 450; right: 16px; bottom: calc(var(--sheet-h) + 36px);
   display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 16px 0 12px; border: 0; border-radius: 22px;
   background: var(--bg); color: var(--ink); font-size: 14px; font-weight: 700;
-  box-shadow: var(--shadow); transition: bottom .3s ease;
+  box-shadow: var(--shadow); transition: bottom .3s ease, opacity .2s ease, transform .2s ease, visibility 0s;
 }
 .locate-btn .icon { color: var(--accent); }
 .locate-btn.on { background: var(--accent); color: #fff; }
@@ -93,10 +99,9 @@ button { cursor: pointer; }
   position: fixed; z-index: 400; left: 0; right: 0; bottom: 0; height: calc(100% - 76px);
   display: flex; flex-direction: column; background: var(--bg);
   border-radius: 24px 24px 0 0; box-shadow: 0 -6px 24px rgba(20, 20, 30, .1);
-  transform: translateY(calc(100% - var(--sheet-peek))); transition: transform .3s ease;
+  transform: translateY(calc(100% - var(--sheet-h))); transition: transform .3s ease;
 }
-.sheet[data-state="full"] { transform: translateY(0); }
-.sheet[data-state="full"] ~ .locate-btn { bottom: calc(var(--sheet-peek) + 36px); }
+[data-sheet="full"] .sheet { transform: translateY(0); }
 .sheet-head {
   position: relative; display: flex; align-items: baseline; justify-content: center; gap: 8px;
   padding: 22px 16px 12px; border: 0; background: none; width: 100%;
@@ -203,26 +208,53 @@ legend { padding: 0; margin-bottom: 10px; font-size: 15px; font-weight: 700; }
 }
 .maplibregl-ctrl-top-right { top: 112px; transition: top .2s; }
 .has-mid .maplibregl-ctrl-top-right { top: 152px; }
-.maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left { bottom: var(--sheet-peek); }
+.maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left { bottom: var(--sheet-h); transition: bottom .3s ease; }
 
 .toast {
-  position: fixed; z-index: 800; left: 16px; right: 16px; bottom: calc(var(--sheet-peek) + 92px);
+  position: fixed; z-index: 800; left: 16px; right: 16px; bottom: calc(var(--sheet-h) + 92px);
   padding: 10px 14px; border-radius: 12px; background: rgba(28, 28, 30, .9); color: #fff; font-size: 13px; text-align: center;
 }
 .toast[hidden] { display: none; }
+
+/* 一覧を全画面にしたときに地図へ戻るボタン */
+.map-btn {
+  position: fixed; z-index: 450; left: 50%; bottom: calc(76px + var(--safe-b)); transform: translateX(-50%);
+  display: none; align-items: center; gap: 6px; height: 44px; padding: 0 18px 0 14px; border: 0; border-radius: 22px;
+  background: var(--ink); color: #fff; font-size: 14px; font-weight: 700; box-shadow: var(--shadow);
+}
+
+/* ---------- smartphone: keep the list readable ---------- */
+@media (max-width: 899.98px) {
+  /* 一覧を読んでいる間（下スクロール中・全画面）は地図用のボタンを隠す */
+  .controls-hidden .catbar, [data-sheet="full"] .catbar { transform: translateY(-12px); }
+  .controls-hidden .locate-btn, [data-sheet="full"] .locate-btn { transform: translateY(12px); }
+  .controls-hidden .catbar, [data-sheet="full"] .catbar,
+  .controls-hidden .locate-btn, [data-sheet="full"] .locate-btn {
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease, visibility 0s .2s, bottom .3s ease;
+  }
+  .controls-hidden .pills, [data-sheet="full"] .pills { pointer-events: none; }
+  /* 現在地取得後は一覧を広げるので、地図に残るボタンはアイコンだけにする */
+  [data-sheet="half"] .locate-btn { width: 44px; padding: 0; justify-content: center; }
+  [data-sheet="full"] .map-btn { display: flex; }
+  [data-sheet="full"] .list { padding-bottom: 64px; } /* 最後の店舗が地図ボタンに隠れないように */
+  /* 持ち手のドラッグ中にページがスクロール・拡大されないようにする */
+  .sheet-head { touch-action: none; }
+  [data-sheet="half"] .locate-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
 
 /* ---------- desktop: list on the left ---------- */
 @media (min-width: 900px) {
   :root { --panel: 400px; }
   #map { left: var(--panel); }
   .searchbar { left: 16px; right: auto; width: calc(var(--panel) - 32px); }
-  .sheet, .sheet[data-state] {
+  .sheet, [data-sheet] .sheet {
     top: 0; left: 0; right: auto; width: var(--panel); height: 100%; transform: none;
     padding-top: 76px; border-radius: 0; box-shadow: 1px 0 0 var(--line);
   }
   .sheet-head { justify-content: flex-start; padding: 8px 16px 12px; cursor: default; }
   .sheet-head .grip { display: none; }
-  .locate-btn, .sheet[data-state] ~ .locate-btn { bottom: 28px; }
+  .locate-btn { bottom: 28px; }
   .catbar { left: var(--panel); top: 12px; }
   .maplibregl-ctrl-top-right, .has-mid .maplibregl-ctrl-top-right { top: 0; }
   .maplibregl-ctrl-top-right { margin-top: 56px; }

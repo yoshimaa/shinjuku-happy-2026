@@ -44,6 +44,11 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const isDesktop = () => matchMedia("(min-width: 900px)").matches;
   const norm = (s) => s.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  // 全角の英数字・記号を半角にして、店名が間延びして何行にも折り返されないようにする（括弧は全角のまま）
+  const tidy = (s) =>
+    String(s)
+      .replace(/[！-～]/g, (c) => ("（）［］｛｝".includes(c) ? c : String.fromCharCode(c.charCodeAt(0) - 0xfee0)))
+      .replace(/　/g, " ");
   const icon = (key, cls = "icon") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[key]}</svg>`;
   const PIN_ICON = '<path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12Z"/><circle cx="12" cy="10" r="2.5" fill="#fff" stroke="none"/>';
 
@@ -56,13 +61,21 @@
   const START_ZOOM = 13.9;
   const DETAIL_ZOOM = 15.5;
   const toLngLat = ([lat, lng]) => [lng, lat];
+  // 現在地が区外なら、距離は意味をなさない（数十km）ので牛込保健センターからの近さで並べる
+  const meInside = () => !!me && inBounds(me);
+  const origin = () => (me ? (meInside() ? me : HOME) : null);
+
+  // 一覧シートが地図に重なる割合（CSS の --sheet-peek / --sheet-half と対応）
+  // peek: 初期表示。half: 現在地取得後で、近くの店舗を多く見せる
+  const SHEET_RATIO = { peek: 0.42, half: 0.6 };
+  let baseSheet = "peek"; // 全画面を閉じたときに戻る高さ
 
   // 検索バー・分類バー・一覧シートに隠れない範囲を地図の表示領域にする
   const mapPadding = () => {
     const bars = document.body.classList.contains("has-mid") ? 40 : 0;
     return isDesktop()
       ? { top: 64 + bars, bottom: 20, left: 20, right: 20 }
-      : { top: 116 + bars, bottom: Math.round(innerHeight * 0.42), left: 0, right: 0 };
+      : { top: 116 + bars, bottom: Math.round(innerHeight * SHEET_RATIO[baseSheet]), left: 0, right: 0 };
   };
   const map = new maplibregl.Map({
     container: "map",
@@ -176,8 +189,9 @@
 
   function refresh({ fit = false } = {}) {
     visible = shops.filter((s) => matches(s, applied));
-    if (me) {
-      visible.forEach((s) => (s.dist = s.latlng ? distance(me, s.latlng) : Infinity));
+    const o = origin();
+    if (o) {
+      visible.forEach((s) => (s.dist = s.latlng ? distance(o, s.latlng) : Infinity));
       visible.sort((a, b) => a.dist - b.dist);
     }
     shown = PAGE;
@@ -188,7 +202,8 @@
   }
 
   function renderSummary() {
-    $("result-count").textContent = `${visible.length.toLocaleString()}件${me ? "・近い順" : ""}`;
+    const order = !me ? "" : meInside() ? "・近い順" : "・牛込保健センターに近い順";
+    $("result-count").textContent = `${visible.length.toLocaleString()}件${order}`;
     const d = DEFAULT();
     const tags = [
       ...applied.tickets.map((t) => TICKETS.find((x) => x.key === t).label + "が使える"),
@@ -212,7 +227,7 @@
       <div class="card-body">
         <div class="card-top">
           <h3 class="card-name">${esc(s.name)}</h3>
-          ${me && isFinite(s.dist) ? `<span class="dist">${fmtDist(s.dist)}</span>` : ""}
+          ${meInside() && isFinite(s.dist) ?`<span class="dist">${fmtDist(s.dist)}</span>` : ""}
         </div>
         <p class="meta">${esc(s.industry)}・${esc(s.assoc)}</p>
         <p class="addr"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none">${PIN_ICON}</svg>${esc(s.address.replace(/^東京都/, ""))}</p>
@@ -295,12 +310,76 @@
 
   // ---------- bottom sheet ----------
   function setSheet(state) {
-    $("sheet").dataset.state = state;
+    document.body.dataset.sheet = state;
     $("sheet-toggle").setAttribute("aria-expanded", state === "full");
+    showControls();
+    if (state === "full") $("toast").hidden = true; // 一覧の上に重ならないよう閉じる
+    if (state !== "full" && state !== baseSheet) {
+      baseSheet = state;
+      map.setPadding(mapPadding());
+    }
   }
   $("sheet-toggle").addEventListener("click", () => {
-    if (!isDesktop()) setSheet($("sheet").dataset.state === "full" ? "peek" : "full");
+    if (dragged) return (dragged = false); // ドラッグ直後のクリックは無視
+    if (!isDesktop()) setSheet(document.body.dataset.sheet === "full" ? baseSheet : "full");
   });
+  $("show-map").addEventListener("click", () => setSheet(baseSheet));
+
+  // 持ち手を上下にドラッグ・フリックしてシートの高さを変える（指を離すと近い高さに吸着）
+  const sheetHeight = (state) => (state === "full" ? $("sheet").offsetHeight : innerHeight * SHEET_RATIO[state]);
+  let drag = null;
+  let dragged = false;
+  $("sheet-toggle").addEventListener("pointerdown", (e) => {
+    if (isDesktop() || !e.isPrimary) return;
+    const h = sheetHeight(document.body.dataset.sheet);
+    drag = { startY: e.clientY, startH: h, h, y: e.clientY, t: e.timeStamp, v: 0 };
+    dragged = false;
+    $("sheet-toggle").setPointerCapture(e.pointerId);
+  });
+  $("sheet-toggle").addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const dy = e.clientY - drag.startY;
+    if (!dragged && Math.abs(dy) < 6) return; // 小さな動きはタップとして扱う
+    dragged = true;
+    drag.v = (drag.y - e.clientY) / Math.max(e.timeStamp - drag.t, 1); // 上向きが正（px/ms）
+    drag.y = e.clientY;
+    drag.t = e.timeStamp;
+    const full = sheetHeight("full");
+    drag.h = Math.min(full, Math.max(sheetHeight("peek") * 0.7, drag.startH - dy));
+    const sheet = $("sheet");
+    sheet.style.transition = "none";
+    sheet.style.transform = `translateY(${full - drag.h}px)`;
+  });
+  function endDrag() {
+    if (!drag) return;
+    const { h, v } = drag;
+    drag = null;
+    if (!dragged) return;
+    const sheet = $("sheet");
+    sheet.style.transition = sheet.style.transform = "";
+    // 指を離したときの勢いを加味して、最も近い高さを選ぶ
+    const target = h + v * 200;
+    const next = ["peek", "half", "full"].reduce((a, b) => (Math.abs(sheetHeight(b) - target) < Math.abs(sheetHeight(a) - target) ? b : a));
+    setSheet(next);
+  }
+  $("sheet-toggle").addEventListener("pointerup", endDrag);
+  $("sheet-toggle").addEventListener("pointercancel", endDrag);
+
+  // スマホでは一覧を下にスクロールしている間、分類バーと現在地ボタンを隠して一覧を見やすくする
+  // 上にスクロールする・先頭に戻る・地図に触れると再表示する
+  let lastScroll = 0;
+  function showControls() {
+    document.body.classList.remove("controls-hidden");
+    lastScroll = $("list").scrollTop;
+  }
+  $("list").addEventListener("scroll", () => {
+    if (isDesktop()) return;
+    const top = $("list").scrollTop;
+    if (Math.abs(top - lastScroll) < 8) return; // 指の小さな揺れは無視
+    document.body.classList.toggle("controls-hidden", top > lastScroll && top > 24);
+    lastScroll = top;
+  }, { passive: true });
+  map.getCanvasContainer().addEventListener("pointerdown", showControls);
 
   $("list").addEventListener("click", (e) => {
     if (e.target.closest(".more")) {
@@ -464,7 +543,8 @@
   // reset=true（ボタン操作）のときは選択状態を解除し、現在地を起点に地図と一覧を描き直す
   function showMe(pos, { reset }) {
     me = [pos.coords.latitude, pos.coords.longitude];
-    $("locate").classList.add("on");
+    const inside = meInside();
+    $("locate").classList.toggle("on", inside);
     if (meMarker) meMarker.setLngLat(toLngLat(me));
     else {
       const el = document.createElement("div");
@@ -475,14 +555,14 @@
       popup.remove();
       activeId = null;
       mapReady.then(() => map.setFilter("pin-active", ["==", ["get", "id"], -1]));
-      if (!isDesktop()) setSheet("peek");
+      // 近い順の一覧が主役になるので、シートを広げて店舗情報を多く見せる（地図は現在地周辺だけ）
+      if (!isDesktop()) setSheet("half");
     }
-    const inside = inBounds(me);
     const zoom = reset ? START_ZOOM : Math.max(map.getZoom(), START_ZOOM);
     map.jumpTo({ center: toLngLat(inside ? me : HOME), zoom });
     refresh();
     $("list").scrollTop = 0;
-    if (!inside) toast("現在地が新宿区外のため、牛込保健センター周辺を表示しています");
+    if (!inside) toast("現在地が新宿区外のため、牛込保健センターに近い順に表示しています");
     else if (reset) toast("現在地から近い順に表示しています");
   }
 
@@ -517,6 +597,11 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => (el.hidden = true), 4000);
   }
+  $("toast").addEventListener("click", () => ($("toast").hidden = true));
+
+  // 地図以外の場所をピンチしてページ全体が拡大され、画面が崩れるのを防ぐ
+  // （iOS Safari は viewport の maximum-scale を無視するため。地図のピンチ操作には影響しない）
+  for (const type of ["gesturestart", "gesturechange"]) document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
 
   // ---------- boot ----------
   // 店舗データと現在地は並行して取りにいく（地図は牛込保健センターを起点にすぐ表示）
@@ -524,7 +609,7 @@
   fetch("data/shops.json")
     .then((r) => r.json())
     .then((data) => {
-      shops = data.map((s) => ({ ...s, category: categoryOf(s.big), text: norm([s.name, s.industry, s.big, s.mid, s.address, s.assoc, s.area].join(" ")) }));
+      shops = data.map((s) => ({ ...s, name: tidy(s.name), industry: tidy(s.industry), address: tidy(s.address), category: categoryOf(s.big), text:norm([s.name, s.industry, s.big, s.mid, s.address, s.assoc, s.area].join(" ")) }));
       refresh();
     })
     .catch(() => {
