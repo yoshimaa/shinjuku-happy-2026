@@ -549,7 +549,11 @@
     else {
       const el = document.createElement("div");
       el.className = "me";
-      meMarker = new maplibregl.Marker({ element: el }).setLngLat(toLngLat(me)).addTo(map);
+      el.innerHTML =
+        '<span class="me-label">現在地</span>' +
+        '<svg class="me-pin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 23s8-6.8 8-13a8 8 0 0 0-16 0c0 6.2 8 13 8 13Z" fill="#2f80ed" stroke="#fff" stroke-width="1.6"/><circle cx="12" cy="10" r="3.4" fill="#fff"/></svg>';
+      // ピンの先端が現在地を指すよう下端を基準にする（DOM のマーカーなので店舗のピンより手前に出る）
+      meMarker = new maplibregl.Marker({ element: el, anchor: "bottom" }).setLngLat(toLngLat(me)).addTo(map);
     }
     if (reset) {
       popup.remove();

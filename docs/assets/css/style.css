@@ -40,12 +40,14 @@ button { cursor: pointer; }
   position: fixed; z-index: 500; top: calc(12px + env(safe-area-inset-top, 0px)); left: 16px; right: 16px;
   display: flex; gap: 10px;
 }
+/* min-width / width を指定しないと、iOS Safari は入力欄の既定幅（20文字分）を和文フォントの全角幅で
+   計算して縮めず、検索バーが画面右へはみ出して絞り込みボタンが見えなくなる */
 .search {
-  flex: 1; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 14px;
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 14px;
   background: var(--bg); border-radius: var(--radius); box-shadow: var(--shadow);
 }
 .search .icon { color: var(--accent); }
-.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font-size: 16px; }
+.search input { flex: 1; width: 100%; min-width: 0; -webkit-appearance: none; appearance: none; border: 0; outline: 0; background: none; font-size: 16px; }
 .search input::placeholder { color: #a5a5ab; }
 .filter-btn {
   position: relative; width: 48px; height: 48px; flex: none; border: 0; border-radius: var(--radius);
@@ -196,7 +198,19 @@ legend { padding: 0; margin-bottom: 10px; font-size: 15px; font-weight: 700; }
 .primary-btn:disabled { opacity: .5; }
 
 /* ---------- map ---------- */
-.me { width: 16px; height: 16px; border-radius: 50%; background: #2f80ed; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(47,128,237,.2); }
+/* 現在地：店舗のピン（黒・オレンジ）と区別できる青いピンに「現在地」ラベルを付け、足元を脈打たせる */
+.me { --me: #2f80ed; position: relative; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+.me-label {
+  margin-bottom: 4px; padding: 3px 9px; border-radius: 10px; background: var(--me); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 1.4; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.25);
+}
+.me-pin { width: 40px; height: 40px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
+.me::after {
+  content: ""; position: absolute; z-index: -1; left: 50%; bottom: -8px; width: 22px; height: 16px; margin-left: -11px;
+  border-radius: 50%; background: rgba(47,128,237,.45); animation: me-pulse 1.8s ease-out infinite;
+}
+@keyframes me-pulse { from { transform: scale(.6); opacity: 1; } to { transform: scale(2.6); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .me::after { animation: none; } }
 .maplibregl-popup-content { padding: 14px 16px; border-radius: var(--radius); box-shadow: var(--shadow); font-family: inherit; font-size: 13px; line-height: 1.5; min-width: 200px; }
 .maplibregl-popup-content p { margin: 0; }
 .pop-name { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
