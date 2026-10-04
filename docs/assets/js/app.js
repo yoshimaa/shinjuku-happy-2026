@@ -81,26 +81,63 @@
       ? { top: 64 + bars, bottom: 20, left: 20, right: 20 }
       : { top: 116 + bars, bottom: Math.round(innerHeight * SHEET_RATIO[baseSheet]), left: 0, right: 0 };
   };
-  const map = new maplibregl.Map({
-    container: "map",
-    style: "assets/map/liberty-ja.json",
-    center: toLngLat(HOME),
-    zoom: START_ZOOM,
-    minZoom: 12,
-    maxZoom: 18,
-    maxBounds: BOUNDS,
-    dragRotate: false,
-    pitchWithRotate: false,
-    touchPitch: false,
-    attributionControl: { compact: true },
-  });
-  map.touchZoomRotate.disableRotation();
-  map.setPadding(mapPadding());
-  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
-  addEventListener("resize", () => map.setPadding(mapPadding()));
-
-  const mapReady = new Promise((ok) => map.on("load", ok));
-  const popup = new maplibregl.Popup({ closeButton: false, offset: [0, -30], maxWidth: "280px" });
+  // 地図ライブラリが読めない・WebGL が使えない・スタイルを取得できないときは map = null にして、一覧だけで使えるようにする
+  // （mapReady は地図の準備ができたときだけ解決する。使えない場合は解決しないので、地図の処理は行われない）
+  let map = null;
+  let popup = null;
+  let mapLoaded;
+  const mapReady = new Promise((ok) => (mapLoaded = ok));
+  function mapFailed() {
+    try {
+      meMarker?.remove();
+      map?.remove();
+    } catch {}
+    map = popup = meMarker = null;
+    document.body.classList.add("no-map");
+    $("map-msg").textContent = "地図を表示できません。一覧からお探しください";
+    $("map-msg").hidden = false;
+    if (!isDesktop() && document.body.dataset.sheet === "peek") setSheet("half");
+  }
+  try {
+    if (typeof maplibregl === "undefined") throw new Error("maplibre-gl is not loaded");
+    map = new maplibregl.Map({
+      container: "map",
+      style: "assets/map/liberty-ja.json",
+      center: toLngLat(HOME),
+      zoom: START_ZOOM,
+      minZoom: 12,
+      maxZoom: 18,
+      maxBounds: BOUNDS,
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
+      attributionControl: { compact: true },
+    });
+    map.touchZoomRotate.disableRotation();
+    map.setPadding(mapPadding());
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    popup = new maplibregl.Popup({ closeButton: false, offset: [0, -30], maxWidth: "280px" });
+    // スタイル本体を取得できなければ地図は表示されない。タイルなどの一時的な取得エラーでは地図を止めない
+    let styleLoaded = false;
+    map.once("style.load", () => (styleLoaded = true));
+    map.on("error", () => !styleLoaded && mapFailed());
+    // 回線が遅い・地図サーバーが応答しないときは案内だけ出す（あとから表示できれば消す）
+    const slow = setTimeout(() => {
+      if (!map) return;
+      $("map-msg").textContent = "地図を読み込んでいます。一覧からも店舗を探せます";
+      $("map-msg").hidden = false;
+    }, 15000);
+    map.on("load", () => {
+      clearTimeout(slow);
+      $("map-msg").hidden = true;
+      mapLoaded();
+    });
+  } catch (err) {
+    console.error(err);
+    // シートなどの準備が終わってから切り替える
+    queueMicrotask(mapFailed);
+  }
+  addEventListener("resize", () => map?.setPadding(mapPadding()));
   let meMarker = null;
 
   // ピン画像を canvas で作る（外部画像の読み込みなし）
@@ -157,7 +194,13 @@
       const zoom = await map.getSource("shops").getClusterExpansionZoom(f.properties.cluster_id);
       map.easeTo({ center: f.geometry.coordinates, zoom });
     });
-    map.on("click", "pins", (e) => select(e.features[0].properties.id, { fromMap: true }));
+    // 同じ座標に複数の店舗があれば候補から選ぶ（強調表示用の pin-active レイヤーは数えない）
+    map.on("click", "pins", (e) => {
+      const s = shops.find((x) => x.id === e.features[0].properties.id);
+      const group = sameSpot(s);
+      if (group.length > 1) showSpot(group);
+      else select(s.id, { fromMap: true });
+    });
     for (const layer of ["clusters", "pins"]) {
       map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
       map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
@@ -344,6 +387,7 @@
           ${s.support ? '<span class="tag support">応援券</span>' : ""}
           ${s.common ? '<span class="tag common">共通券</span>' : ""}
         </div>
+        <div class="card-links">${linksHtml(s)}</div>
       </div>
     </li>`;
   }
@@ -372,21 +416,67 @@
     });
   }
 
-  function popupHtml(s) {
+  // 電話・Googleマップ・Webサイトへのリンク（地図のポップアップと、地図を使えないときの一覧カードで共用）
+  function linksHtml(s) {
     const gmap = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.name + " " + s.address)}`;
-    return `<p class="pop-name">${esc(s.name)}</p>
+    return `${s.tel ? `<a href="tel:${esc(s.tel)}">電話する</a>` : ""}
+        <a href="${gmap}" target="_blank" rel="noopener">Googleマップ</a>
+        ${/^https?:\/\//.test(s.url) ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">Webサイト</a>` : ""}`;
+  }
+
+  function popupHtml(s) {
+    const others = sameSpot(s).length - 1;
+    return `${others > 0 ? `<button type="button" class="pop-back" data-spot="${s.id}">‹ 同じ場所の店舗（${others + 1}件）</button>` : ""}
+      <p class="pop-name">${esc(s.name)}</p>
       <p class="pop-meta">${esc(s.industry)}</p>
       <p class="pop-meta">${esc(s.address)}</p>
       <div class="tickets">
         ${s.support ? '<span class="tag support">応援券</span>' : ""}
         ${s.common ? '<span class="tag common">共通券</span>' : ""}
       </div>
-      <div class="pop-links">
-        ${s.tel ? `<a href="tel:${esc(s.tel)}">電話する</a>` : ""}
-        <a href="${gmap}" target="_blank" rel="noopener">Googleマップ</a>
-        ${/^https?:\/\//.test(s.url) ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">Webサイト</a>` : ""}
-      </div>`;
+      <div class="pop-links">${linksHtml(s)}</div>`;
   }
+
+  // 同じ座標にある表示中の店舗（ピンが完全に重なり、拡大しても分かれない）
+  const sameSpot = (s) =>
+    s.latlng ? visible.filter((x) => x.latlng && x.latlng[0] === s.latlng[0] && x.latlng[1] === s.latlng[1]) : [s];
+
+  // 重なっている店舗の候補をポップアップで一覧にする。候補が多くても最後まで選べるよう、
+  // ピンを地図の表示領域の下端に寄せ、ポップアップを表示領域に収まる高さにしてスクロールさせる
+  function showSpot(group) {
+    if (!map) return;
+    if (!isDesktop() && document.body.dataset.sheet !== "peek") setSheet("peek");
+    const pad = mapPadding();
+    const h = innerHeight - pad.top - pad.bottom;
+    map.easeTo({ center: toLngLat(group[0].latlng), offset: [0, h / 2 - 16], duration: 0 });
+    const html = `<p class="pop-name" id="spot-title">この場所の店舗（${group.length}件）</p>
+      <ul class="spot" aria-labelledby="spot-title" style="max-height:${Math.max(132, Math.min(360, h - 140))}px">${group
+        .map((s) => `<li><button type="button" class="spot-item${s.id === activeId ? " active" : ""}" data-id="${s.id}">
+          <span>${esc(s.name)}</span><small>${esc(s.industry)}</small></button></li>`)
+        .join("")}</ul>`;
+    popup.setLngLat(toLngLat(group[0].latlng)).setHTML(html).addTo(map);
+    // 選択中の店舗から戻ったときは、その店舗が見える位置から続けて選べるようにする
+    const list = popup.getElement().querySelector(".spot");
+    const item = list.querySelector(".spot-item.active") || list.querySelector(".spot-item");
+    list.scrollTop = item.parentElement.offsetTop - list.clientHeight / 2;
+    item.focus({ preventScroll: true });
+  }
+  // ポップアップ内の操作：候補を選ぶ・候補一覧に戻る。描き直しで押したボタンが消えるので、フォーカスはポップアップ内に移す
+  document.addEventListener("click", (e) => {
+    const item = e.target.closest(".spot-item");
+    const back = e.target.closest(".pop-back");
+    if (item) {
+      select(Number(item.dataset.id), { fromMap: true });
+      popup.getElement().querySelector(".pop-back")?.focus({ preventScroll: true });
+    } else if (back) {
+      showSpot(sameSpot(shops.find((x) => x.id === Number(back.dataset.spot))));
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !popup?.isOpen() || !popup.getElement().contains(document.activeElement)) return;
+    popup.remove();
+    map.getCanvas().focus();
+  });
 
   function select(id, { fromMap = false } = {}) {
     activeId = id;
@@ -407,13 +497,13 @@
       }
     } else {
       document.querySelector(`.card[data-id="${id}"]`)?.classList.add("active");
-      if (!s.latlng) return;
+      if (!s.latlng || !map) return; // 地図がないときは一覧カードに詳細を表示する
       if (!isDesktop()) setSheet("peek");
       // 途中のズームのタイルを読まないよう、アニメーションなしで移動する
       // ポップアップが検索バーに隠れないよう、ピンを表示領域の少し下に置く
       map.easeTo({ center: toLngLat(s.latlng), zoom: Math.max(map.getZoom(), DETAIL_ZOOM), offset: [0, 70], duration: 0 });
     }
-    if (s.latlng) popup.setLngLat(toLngLat(s.latlng)).setHTML(popupHtml(s)).addTo(map);
+    if (s.latlng && map) popup.setLngLat(toLngLat(s.latlng)).setHTML(popupHtml(s)).addTo(map);
   }
 
   // ---------- bottom sheet ----------
@@ -424,7 +514,7 @@
     if (state === "full") $("toast").hidden = true; // 一覧の上に重ならないよう閉じる
     if (state !== "full" && state !== baseSheet) {
       baseSheet = state;
-      map.setPadding(mapPadding());
+      map?.setPadding(mapPadding());
     }
   }
   $("sheet-toggle").addEventListener("click", () => {
@@ -487,7 +577,7 @@
     document.body.classList.toggle("controls-hidden", top > lastScroll && top > 24);
     lastScroll = top;
   }, { passive: true });
-  map.getCanvasContainer().addEventListener("pointerdown", showControls);
+  $("map").addEventListener("pointerdown", showControls);
 
   $("list").addEventListener("click", (e) => {
     if (e.target.closest(".more")) {
@@ -500,7 +590,8 @@
   });
   $("list").addEventListener("keydown", (e) => {
     const card = e.target.closest(".card");
-    if (card && (e.key === "Enter" || e.key === " ")) {
+    // カード内のリンク（地図を使えないとき）は通常どおり開く
+    if (card && e.target === card && (e.key === "Enter" || e.key === " ")) {
       e.preventDefault();
       select(Number(card.dataset.id));
     }
@@ -559,7 +650,7 @@
     $("cat-mid").hidden = !showMid;
     if (document.body.classList.contains("has-mid") !== showMid) {
       document.body.classList.toggle("has-mid", showMid);
-      map.setPadding(mapPadding());
+      map?.setPadding(mapPadding());
     }
     if (showMid) {
       const midCounts = countBy("mid", without(applied, "mids"));
@@ -583,11 +674,11 @@
   $("cat-big").addEventListener("click", (e) => {
     const b = e.target.closest(".pill");
     if (!b) return;
-    if ("more" in b.dataset) return openFilter();
+    if ("more" in b.dataset) return openFilter(b);
     const key = b.dataset.big;
     const same = applied.bigs.length === 1 && applied.bigs[0] === key;
     applied = { ...applied, bigs: same ? [] : [key], mids: [] };
-    popup.remove();
+    popup?.remove();
     refreshKeepingView();
     if (!same) b.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
   });
@@ -597,7 +688,7 @@
     const m = b.dataset.mid;
     const same = applied.mids.length === 1 && applied.mids[0] === m;
     applied = { ...applied, mids: !m || same ? [] : [m] };
-    popup.remove();
+    popup?.remove();
     refreshKeepingView();
   });
 
@@ -622,27 +713,48 @@
       const b = e.target.closest(".chip");
       if (!b) return;
       const v = b.dataset.value;
+      const focused = document.activeElement === b;
       draft[field] = draft[field].includes(v) ? draft[field].filter((x) => x !== v) : [...draft[field], v];
       renderFilter();
+      // 描き直しで押したボタンが置き換わるので、キーボード操作の位置を保つ
+      if (focused) [...$(id).querySelectorAll(".chip")].find((c) => c.dataset.value === v)?.focus();
     });
   }
   bindChips("f-ticket", "tickets");
   bindChips("f-big", "bigs");
   bindChips("f-mid", "mids");
 
-  function openFilter() {
+  // ネイティブのモーダルダイアログ：開いている間は背面を操作できず、Escape で閉じる（未適用の変更は捨てる）
+  let opener = null;
+  function openFilter(from) {
+    opener = from;
     draft = structuredClone(applied);
     renderFilter();
-    $("filter").hidden = $("filter-backdrop").hidden = false;
-    $("apply").focus();
+    $("filter").showModal();
+    $("close-filter").focus(); // 「結果を表示」は0件だと押せないので、閉じるボタンを起点にする
   }
+  // 閉じたら開いたボタンへフォーカスを戻す。詳細設定のピルは一覧の更新で描き直されるので、新しいピルへ戻す
+  // （close イベントは描画のタイミングまで遅れることがあるので、閉じる操作の中で戻す）
   function closeFilter() {
-    $("filter").hidden = $("filter-backdrop").hidden = true;
-    $("open-filter").focus();
+    if ($("filter").open) $("filter").close();
+    const back = opener?.isConnected ? opener : opener?.matches("[data-more]") ? $("cat-big").querySelector("[data-more]") : null;
+    (back || $("open-filter")).focus();
+    opener = null;
   }
-  $("open-filter").addEventListener("click", openFilter);
-  $("filter-backdrop").addEventListener("click", closeFilter);
-  document.addEventListener("keydown", (e) => e.key === "Escape" && !$("filter").hidden && closeFilter());
+  $("filter").addEventListener("cancel", (e) => {
+    e.preventDefault();
+    closeFilter();
+  });
+  // Escape を続けて押すと cancel を止められずにブラウザが閉じることがあるので、その場合も戻す
+  $("filter").addEventListener("close", () => opener && closeFilter());
+  $("open-filter").addEventListener("click", () => openFilter($("open-filter")));
+  $("close-filter").addEventListener("click", closeFilter);
+  // 背景（ダイアログの外側）のクリックで閉じる
+  $("filter").addEventListener("click", (e) => {
+    if (e.target !== $("filter")) return;
+    const r = $("filter").getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeFilter();
+  });
   // リセットは画面上の選択だけを戻す（「結果を表示」で反映）。検索語は残し、検索中なら絞り込みなしに戻す
   $("reset").addEventListener("click", () => {
     draft = search ? NONE() : DEFAULT();
@@ -650,18 +762,23 @@
   });
   $("apply").addEventListener("click", () => {
     applied = structuredClone(draft); // 検索中なら検索結果にかけ合わせる
-    closeFilter();
     refresh({ fit: true });
+    closeFilter(); // 描き直した後の詳細設定ピルへフォーカスを戻すため、更新してから閉じる
   });
 
   // ---------- current location ----------
+  // 起動時の自動取得が届く前に操作されていたら、その後の画面（選択中の店舗・地図の位置・一覧の閲覧位置）を動かさない。
+  // ユーザーの入力だけを拾うので、プログラムによる地図の移動や一覧のスクロールでは立たない
+  let interacted = false;
+  for (const type of ["pointerdown", "wheel", "keydown"]) addEventListener(type, () => (interacted = true), { capture: true, passive: true });
+
   // reset=true（ボタン操作）のときは選択状態を解除し、現在地を起点に地図と一覧を描き直す
   function showMe(pos, { reset }) {
     me = [pos.coords.latitude, pos.coords.longitude];
     const inside = meInside();
     $("locate").classList.toggle("on", inside);
     if (meMarker) meMarker.setLngLat(toLngLat(me));
-    else {
+    else if (map) {
       const el = document.createElement("div");
       el.className = "me";
       el.innerHTML =
@@ -670,15 +787,19 @@
       // ピンの先端が現在地を指すよう下端を基準にする（DOM のマーカーなので店舗のピンより手前に出る）
       meMarker = new maplibregl.Marker({ element: el, anchor: "bottom" }).setLngLat(toLngLat(me)).addTo(map);
     }
+    // 現在地は記録したので、近い順への並べ替えは次に一覧を更新したとき（検索・絞り込みなど）に反映される
+    if (!reset && interacted) return;
     if (reset) {
-      popup.remove();
+      popup?.remove();
       activeId = null;
       mapReady.then(() => map.setFilter("pin-active", ["==", ["get", "id"], -1]));
       // 近い順の一覧が主役になるので、シートを広げて店舗情報を多く見せる（地図は現在地周辺だけ）
       if (!isDesktop()) setSheet("half");
     }
-    const zoom = reset ? START_ZOOM : Math.max(map.getZoom(), START_ZOOM);
-    map.jumpTo({ center: toLngLat(inside ? me : HOME), zoom });
+    if (map) {
+      const zoom = reset ? START_ZOOM : Math.max(map.getZoom(), START_ZOOM);
+      map.jumpTo({ center: toLngLat(inside ? me : HOME), zoom });
+    }
     refresh();
     $("list").scrollTop = 0;
     if (!inside) toast("現在地が新宿区外のため、牛込保健センターに近い順に表示しています");
